@@ -1,0 +1,535 @@
+from cmu_graphics import *
+import random
+import math
+
+#-OOP----------------------------------------------------------------------------------------------------------------------------------------------------------------
+class Fruit:
+    def __init__(self, type, x, y, vx, vy, og_vx, og_vy, half=False):
+        self.type = type
+        self.x = x
+        self.y = y
+        self.vx = vx 
+        self.vy = vy
+        self.alive = True
+        self.sliced = False
+        self.radius = 30 if type == 'bomb' else 24
+        self.size = 50
+        self.rotation = 0
+        self.halfed = half
+        self.og_vx = og_vx
+        self.og_vy = og_vy
+
+class Banana:
+    def __init__(self, type, x, y, vx, vy, half=False):
+        self.type = type
+        self.x = x
+        self.y = y
+        self.vx = vx 
+        self.vy = vy
+        self.radius = 30
+        self.size = 50
+        self.alive = True
+        self.sliced = False
+        self.rotation = 0
+        self.halfed = half
+        self.og_vx = vx
+        self.og_vy = vy
+        
+#-SPAWN---------------------------------------------------------------------------------------------------------------------------------------------------------------
+def spawnFruit(app):
+    if app.frenzyActive:
+        if random.random() < 0.5:
+            x = random.randrange(0, 20)
+            vx = random.randrange(4, 7)
+            #y = random.randrange(150, 300)
+            #vy = random.randrange(12, 17)
+        else:
+            x = random.randrange(app.width - 20, app.width)
+            vx = random.randrange(-7, -4)
+        y = random.randrange(50, 200)
+        vy = random.randrange(-3, 1)
+    else:
+        x = random.randrange(75, app.width - 75)
+        vx = random.randrange(-2, 2)
+        y = app.height
+        vy = random.randrange(15, 20)
+    
+    og_vx = vx
+    og_vy = vy
+    
+    if app.screen == 'classic' or app.screen == 'arcade':
+        if app.freezeActive:
+            vx *= app.slowdown
+            vy *= app.slowdown
+        if not app.frenzyActive:
+            if random.random() < 0.1:
+                return Fruit('bomb', x, y, vx, vy, og_vx, og_vy, False)
+    fruitType = random.choice(app.types)
+    return Fruit(fruitType, x, y, vx, vy, og_vx, og_vy, False)
+    #spawn one of the types of fruit, at a random x position, with an x position, append to app.fruits
+    
+#-SLASH-PT1--------------------------------------------------------------------------------------------------------------------------------------------------------------
+def startSlash(app):
+    for i in range(len(app.trail) - 1):
+        x1, y1 = app.trail[i]
+        x2, y2 = app.trail[i+1]
+        if pointSegmentDistance(x1, x2, y1, y2, 85, 290) <= 50:
+            return 'classic'
+        elif pointSegmentDistance(x1, x2, y1, y2, 200, 290) <= 50:
+            return 'zen'
+        elif pointSegmentDistance(x1, x2, y1, y2, 315, 290) <= 50:
+            return 'arcade'
+    
+def slashFruit(app):
+    if len(app.trail) < 2: return
+    
+    toRemove = []
+    slicedCount = 0
+    
+    for fruit in app.fruits:
+        if fruit.sliced: continue
+        if fruit.halfed: continue
+        for i in range(len(app.trail) - 1):
+            hit = False
+            x1, y1 = app.trail[i]
+            x2, y2 = app.trail[i+1]
+            if pointSegmentDistance(x1, x2, y1, y2, fruit.x, fruit.y) <= fruit.radius:
+                hit = True
+                break
+        if hit:
+            fruit.sliced = True
+            fruit.alive = False
+            
+            if fruit.type == 'bomb':
+                if app.screen == 'classic':
+                    app.lives = 0
+                    app.screen = 'end'
+                    app.scores.append(app.score)
+                elif app.screen == 'arcade':
+                    app.score -= 10
+                    if app.frenzyActive:
+                        app.frenzyActive = False
+                        app.spawnRate = 0.03
+            
+                    if app.freezeActive:
+                        app.freezeActive = False
+                        app.gravity = -0.5
+                        for fruit in app.fruits:
+                            fruit.vy = fruit.og_vy
+                            fruit.vx = fruit.og_vx
+                        for banana in app.bananas:
+                            banana.vx = banana.og_vx
+                            banana.vy = banana.og_vy
+        
+                    if app.doubleActive:
+                        app.doubleActive = False
+                        app.factor = 1
+                        
+            else:
+                app.score += app.factor 
+                slicedCount += 1
+                createSlices(app, fruit)
+                if fruit.type == 'apple':
+                    app.appleSplatter.append([fruit.x, fruit.y, app.opacity])
+                elif fruit.type == 'pineapple':
+                    app.pineappleSplatter.append([fruit.x, fruit.y, app.opacity])
+                elif fruit.type == 'watermelon':
+                    app.melonSplatter.append([fruit.x, fruit.y, app.opacity])
+            toRemove.append(fruit)
+    
+    if slicedCount > 1:
+        app.score += (slicedCount - 1)*5
+    
+    for fruit in toRemove:
+        app.fruits.remove(fruit)
+           
+def slashBanana(app):
+    if len(app.trail) < 2: return
+    toRemove = []
+    for fruit in app.bananas:
+        hit = False
+        if fruit.sliced: continue
+        if fruit.halfed: continue
+        for i in range(len(app.trail) - 1):
+            x1, y1 = app.trail[i]
+            x2, y2 = app.trail[i+1]
+            if pointSegmentDistance(x1, x2, y1, y2, fruit.x, fruit.y) <= fruit.radius:
+                hit = True
+                break
+        if hit:
+            fruit.sliced = True
+            fruit.alive = False
+            app.score += app.factor 
+            cutoff = app.time - 7
+            if fruit.type == 'frenzy': frenzy(app, cutoff)
+            elif fruit.type == 'freeze': freeze(app, cutoff)
+            elif fruit.type == 'double': double(app, cutoff)
+            createSlices(app, fruit)
+            toRemove.append(fruit)
+            
+    for fruit in toRemove:
+        app.bananas.remove(fruit)
+        
+#-SLASH-PT2--------------------------------------------------------------------------------------------------------------------------------------------------------------  
+def deadFruit(app):
+    if app.screen == 'zen' or app.screen == 'arcade': return
+    for fruit in app.fruits:
+        if fruit.sliced: continue
+        if fruit.halfed: continue
+        if fruit.y > app.height:
+            fruit.alive = False
+            if fruit.type != 'bomb':
+                app.lives -= 1
+                if app.lives < 0: app.lives = 0
+    if app.lives == 0: 
+        app.screen = 'end'
+        app.scores.append(app.score)
+    
+def createSlices(app, fruit):
+    leftType = 'left' + fruit.type
+    rightType = 'right' + fruit.type
+    
+    left = Fruit(leftType, fruit.x - 8, fruit.y, fruit.vx - 2.5, fruit.vy*0.5, fruit.vx - 2.5, fruit.vy*0.5, True)
+    right = Fruit(rightType, fruit.x + 8, fruit.y, fruit.vx + 2.5, fruit.vy*0.5, fruit.vx - 2.5, fruit.vy*0.5, True)
+    left.radius = int(fruit.radius*0.7)
+    right.radius = int(fruit.radius*0.7)
+    left.size = int(fruit.size*0.9)
+    right.size = int(fruit.size*0.9)
+    left.vy += 2
+    right.vy += 2
+    left.vx -= 0.4
+    right.vx += 0.4
+    
+    if app.freezeActive:
+        left.vx = 0
+        left.vy = 0
+        right.vx = 0
+        right.vy = 0
+    
+    app.fruits.append(left)
+    app.fruits.append(right)
+    
+def splatter(app):
+    for index in range(len(app.appleSplatter)):
+        x, y, opacity = app.appleSplatter[index]
+        opacity = opacity - 1
+        if opacity <= 0: opacity = 0
+        app.appleSplatter[index] = [x, y, opacity]
+        
+    for index in range(len(app.pineappleSplatter)):
+        x, y, opacity = app.pineappleSplatter[index]
+        opacity = opacity - 1
+        if opacity <= 0: opacity = 0
+        app.pineappleSplatter[index] = [x, y, opacity]
+        
+    for index in range(len(app.melonSplatter)):
+        x, y, opacity = app.melonSplatter[index]
+        opacity = opacity - 1
+        if opacity <= 0: opacity = 0
+        app.melonSplatter[index] = [x, y, opacity]
+    
+#-BANANA-EFFECT---------------------------------------------------------------------------------------------------------------------------------------------------------------           
+def frenzy(app, cutoff):
+    app.frenzyActive = True
+    app.spawnRate = 0.15
+    app.frenzyCutoff = cutoff
+    
+def freeze(app, cutoff):
+    if app.freezeActive:
+        app.freezeCutoff = cutoff
+        return
+    
+    app.freezeActive = True
+    app.internalTime = app.time
+    app.gravity = -0.5 * app.slowdown
+    for fruit in app.fruits:
+        fruit.og_vx = fruit.vx
+        fruit.og_vy = fruit.vy
+        fruit.vy *= app.slowdown
+        fruit.vx *= app.slowdown
+    for fruit in app.bananas:
+        fruit.og_vx = fruit.vx
+        fruit.og_vy = fruit.vy
+        fruit.vy *= app.slowdown
+        fruit.vx *= app.slowdown
+    app.freezeCutoff = cutoff
+    
+def double(app, cutoff):
+    app.doubleActive = True
+    app.factor = 2
+    app.doubleCutoff = cutoff
+    
+def bananaEffectReset(app):
+    if app.screen == 'zen' or app.screen == 'arcade':
+        if not app.freezeActive: 
+            app.time -= 1/app.stepsPerSecond
+            app.internalTime -= 1/app.stepsPerSecond
+        else:
+            app.internalTime -= 1/app.stepsPerSecond
+        if app.time <= 0: 
+            app.time = 0
+            app.screen = 'end'
+            app.scores.append(app.score)
+        
+        if app.frenzyActive and app.time <= app.frenzyCutoff:
+            app.frenzyActive = False
+            app.spawnRate = 0.03
+            
+        if app.freezeActive and app.internalTime <= app.freezeCutoff:
+            app.freezeActive = False
+            app.gravity = -0.5
+        
+            for fruit in app.fruits:
+                fruit.vy = fruit.og_vy
+                fruit.vx = fruit.og_vx
+            for banana in app.bananas:
+                banana.vx = banana.og_vx
+                banana.vy = banana.og_vy
+        
+        if app.doubleActive and app.time <= app.doubleCutoff:
+            app.doubleActive = False
+            app.factor = 1
+    
+#-DISTANCE---------------------------------------------------------------------------------------------------------------------------------------------------------------           
+def pointSegmentDistance(x1, x2, y1, y2, px, py):
+    dx = x2 - x1
+    dy = y2 - y1
+    if dx == 0 and dy == 0: return math.hypot(px - x1, py - y1)
+    t = (((px - x1)*dx + (py - y1)* dy) / (dx**2 + dy**2))
+    t = max(0, min(1,t))
+    return math.hypot(px - (x1 + t*dx), py - (y1 + t*dy))
+
+#-STEP---------------------------------------------------------------------------------------------------------------------------------------------------------------    
+def onStep(app):
+    if app.screen == 'end':
+        app.gameOverTime += 1/app.stepsPerSecond
+        
+    if app.screen == 'classic' or app.screen == 'zen' or app.screen == 'arcade':
+        takeStep(app)
+        
+        if random.random() < app.spawnRate:
+            fruit = spawnFruit(app)
+            if fruit is not None:
+                app.fruits.append(fruit)
+        
+        if app.screen == 'arcade' and random.random() < 0.008:
+            x = random.randrange(60, app.width-60)
+            vx = random.randrange(-2, 2)
+            vy = random.randrange(15, 20)
+            if app.freezeActive:
+                vx *= app.slowdown
+                vy *= app.slowdown
+            bananaType = random.choice(app.bananaTypes)
+            app.bananas.append(Banana(bananaType, x, app.height, vx, vy, False))
+    
+def takeStep(app):
+    for fruit in app.fruits:
+        fruit.x += fruit.vx
+        fruit.y -= fruit.vy
+        fruit.vy += app.gravity
+        
+        if fruit.halfed:
+            fruit.rotation += fruit.vx*2
+        else: fruit.rotation += fruit.vx*0.5
+        
+        if fruit.y - fruit.size/2 > app.height:
+            fruit.alive = False
+    
+    for fruit in app.bananas:
+        fruit.x += fruit.vx
+        fruit.y -= fruit.vy
+        fruit.vy += app.gravity
+        
+        if fruit.halfed:
+            fruit.rotation += fruit.vx*2
+        else: fruit.rotation += fruit.vx*0.5
+        
+        if fruit.y - fruit.size/2 > app.height:
+            fruit.alive = False
+    
+    splatter(app)
+    deadFruit(app)
+    bananaEffectReset(app)
+    
+    app.fruits = [fruit for fruit in app.fruits if fruit.alive]
+    app.bananas = [fruit for fruit in app.bananas if fruit.alive]
+    
+#-INPUTS---------------------------------------------------------------------------------------------------------------------------------------------------------------    
+def onMouseDrag(app, mouseX, mouseY):
+    #track the mouse moves to see how the stuff slashes
+    app.trail.append((mouseX, mouseY))
+    if len(app.trail) > app.trailMax: app.trail.pop(0)
+    if app.screen == 'start':
+        if startSlash(app) == 'classic': 
+            app.screen = 'classic'
+            reset(app)
+        elif startSlash(app) == 'zen': 
+            app.screen = 'zen'
+            reset(app)
+        elif startSlash(app) == 'arcade': 
+            app.screen = 'arcade'
+            reset(app)
+    if app.screen == 'classic' or app.screen == 'zen' or app.screen == 'arcade':
+        slashFruit(app)
+    if app.screen == 'arcade':
+        slashBanana(app)
+    
+def drawTrail(app):
+    if len(app.trail) < 2: return
+    for i in range(len(app.trail) - 1):
+        x1, y1 = app.trail[i]
+        x2, y2 = app.trail[i+1]
+        opacity = 20 + (i/len(app.trail))*30
+        drawLine(x1, y1, x2, y2, lineWidth = 12, fill = app.outTrailColor, opacity = opacity)
+        drawLine(x1, y1, x2, y2, lineWidth = 6, fill = app.inTrailColor, opacity = opacity+20)
+
+def onKeyPress(app, key):
+    if key == 'r':
+        app.screen = 'start'
+        reset(app)
+        
+#-START/DRAW---------------------------------------------------------------------------------------------------------------------------------------------------------------    
+def onAppStart(app):
+    app.slowdown = 0.5
+    app.trailMax = 5
+    app.inTrailColor = 'white'
+    app.outTrailColor = 'deepskyblue'
+    app.types = ['watermelon', 'pineapple', 'apple']
+    app.bananaTypes = ['frenzy', 'freeze', 'double']
+    app.scores = []
+    app.screen = 'start'
+    reset(app)
+    
+    #IMAGES
+    app.bgroundImg = 'https://www.tynker.com/projects/screenshot/571117f0588161c5308b4569/fruit-ninja-1-1.png'
+    
+    app.appleImg = 'https://static.wikia.nocookie.net/fruitninja/images/1/16/Red_Apple.svg/revision/latest/thumbnail/width/360/height/360?cb=20170717213652'
+    app.pineappleImg = 'https://static.wikia.nocookie.net/fruitninja/images/4/4b/Pineapple.svg/revision/latest?cb=20170717213425'
+    app.melonImg = 'https://static.wikia.nocookie.net/fruitninja/images/0/06/Watermelon.png/revision/latest?cb=20120616054514'
+    app.classicBombImg = 'https://static.wikia.nocookie.net/fruitninja/images/3/3b/Bomb.png/revision/latest?cb=20120616112815'
+    app.arcadeBombImg = 'https://static.wikia.nocookie.net/fruitninja/images/c/c2/-10_Bomb.png/revision/latest/?cb=20120616112952'
+    app.leftAppleImg = 'cmu://1073343/43577602/leftapple-removebg-preview.png'
+    app.rightAppleImg = 'cmu://1073343/43577698/rightapple-removebg-preview.png'
+    app.leftPineappleImg = 'cmu://1073343/43579172/leftpineapple-removebg-preview.png'
+    app.rightPineappleImg = 'cmu://1073343/43579203/rightpineapple-removebg-preview.png'
+    app.leftMelonImg = 'cmu://1073343/43579228/leftmelon-removebg-preview.png'
+    app.rightMelongImg = 'cmu://1073343/43580105/rightmelon-removebg-preview.png'
+    
+def reset(app):
+    app.stepsPerSecond = 30
+    app.gravity = -0.5
+    app.score = 0
+    app.factor = 1
+    app.lives = 3
+    app.fruits = []
+    app.bananas = []
+    app.appleSplatter = []
+    app.pineappleSplatter = []
+    app.melonSplatter = []
+    app.opacity = 50
+    app.trail = []
+    app.spawnRate = 0.03
+    app.frenzyActive = False
+    app.freezeActive = False
+    app.doubleActive = False
+    app.frenzyCutoff = 0
+    app.freezeCutoff = 0
+    app.doubleCutoff = 0
+    app.internalTime = 0
+    app.time = 0
+    app.gameOverTime = 0
+    if app.screen == 'zen': app.time = 90
+    elif app.screen == 'arcade': app.time = 60
+
+#-REDRAWALL---------------------------------------------------------------------------------------------------------------------------------------------------------------
+def redrawAll(app):
+    drawImage(app.bgroundImg, 0, 0, width = app.width, height = app.height, align='left-top')
+    if app.screen == 'start':
+        drawImage('https://static.wikia.nocookie.net/logopedia/images/5/51/FruitNinja.png/revision/latest?cb=20121116022739', app.width/2, app.height/2 - 70, width = app.width- 100, height = app.height - 240, align='center')
+        drawImage('https://static.wikia.nocookie.net/fruitninja/images/4/49/Icon_classic.png/revision/latest?cb=20210226003237', 85, 290, width = 100, height = 100, align='center')
+        drawImage('https://static.wikia.nocookie.net/fruitninja/images/7/71/Icon_zen.png/revision/latest?cb=20210226002527', 200, 290, width = 100, height = 100, align='center')
+        drawImage('https://static.wikia.nocookie.net/fruitninja/images/f/f5/Icon_arcade.png/revision/latest?cb=20210226002845', 310, 290, width = 100, height = 100, align='center')
+        drawTrail(app)
+    
+    if app.screen == 'classic' or app.screen == 'zen' or app.screen == 'arcade':
+        #drawRect(0, 0, app.width, app.height, fill ='burlyWood')
+        drawTrail(app)
+        drawLabel(f'Score: {app.score}', app.width/2, 30, bold = True, size = 24, fill = 'white', font='montserrat')
+        
+        for x, y, opacity in app.appleSplatter:
+            drawImage('https://gallery.yopriceville.com/downloadfullsize/send/28195', x, y, width = 75, height = 75, opacity = opacity)
+        for x, y, opacity in app.pineappleSplatter:
+            drawImage('https://gallery.yopriceville.com/downloadfullsize/send/28196', x, y, width = 75, height = 75, opacity = opacity)
+        for x, y, opacity in app.melonSplatter:
+            drawImage('https://gallery.yopriceville.com/downloadfullsize/send/28197', x, y, width = 75, height = 75, opacity = opacity)
+        
+        for fruit in app.fruits:
+            if fruit.type == 'apple':
+                drawImage(app.appleImg, fruit.x, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            elif fruit.type == 'pineapple':
+                drawImage(app.pineappleImg, fruit.x, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            elif fruit.type == 'watermelon':
+                drawImage(app.melonImg, fruit.x, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            elif fruit.type == 'bomb':
+                if app.screen == 'classic':
+                    drawImage(app.classicBombImg, fruit.x, fruit.y, width = fruit.size, height = fruit.size + 10, rotateAngle = fruit.rotation)
+                if app.screen == 'arcade':
+                    drawImage(app.arcadeBombImg, fruit.x, fruit.y, width = fruit.size, height = fruit.size + 10, rotateAngle = fruit.rotation)
+            elif fruit.type == 'leftapple':
+                drawImage(app.leftAppleImg, fruit.x - fruit.size*0.20, fruit.y, width = fruit.size - 10, height = fruit.size + 10, rotateAngle = fruit.rotation)
+            elif fruit.type == 'rightapple':
+                drawImage(app.rightAppleImg, fruit.x - fruit.size*0.20, fruit.y, width = fruit.size - 10, height = fruit.size + 10, rotateAngle = fruit.rotation)
+            elif fruit.type == 'leftpineapple':
+                drawImage(app.leftPineappleImg, fruit.x - fruit.size*0.20, fruit.y, width = fruit.size - 10, height = fruit.size + 10, rotateAngle = fruit.rotation)
+            elif fruit.type == 'rightpineapple':
+                drawImage(app.rightPineappleImg, fruit.x + fruit.size*0.20, fruit.y, width = fruit.size - 10, height = fruit.size + 10, rotateAngle = fruit.rotation)
+            elif fruit.type == 'leftwatermelon':
+                drawImage(app.leftMelonImg, fruit.x - fruit.size*0.20, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            elif fruit.type == 'rightwatermelon':
+                drawImage(app.rightMelongImg, fruit.x + fruit.size*0.20, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+        
+        for fruit in app.bananas:
+            if fruit.type == 'frenzy':
+                drawImage('https://static.wikia.nocookie.net/fruitninja/images/d/d3/Frenzy_Banana.png/revision/latest?cb=20120616062043', fruit.x, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            elif fruit.type == 'freeze':
+                drawImage('https://static.wikia.nocookie.net/fruitninja/images/2/24/Freeze_Banana.png/revision/latest?cb=20120616062134', fruit.x, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            elif fruit.type == 'double':
+                drawImage('https://static.wikia.nocookie.net/fruitninja/images/d/da/Score_2x_Banana.png/revision/latest?cb=20120616062107', fruit.x, fruit.y, width = fruit.size, height = fruit.size, rotateAngle = fruit.rotation)
+            
+    if app.screen == 'classic':
+        startX = app.width - 30
+        startY = 30
+        spacing = 35
+        size = 12
+        for life in range(3):
+            if life < app.lives: color = 'gray'
+            else: color = 'red'
+            cx = startX - life*spacing
+            cy = startY
+            drawLine(cx - size, cy - size, cx + size, cy + size, lineWidth = 10, fill = color)
+            drawLine(cx - size, cy + size, cx + size, cy - size, lineWidth = 10, fill = color)
+    
+    if app.screen == 'zen' or app.screen == 'arcade':
+        drawLabel(f'Time Left: {math.floor(app.time)}', app.width - 60, 20, size=15, fill = 'white', font='montserrat')
+    
+    #game over screen
+    
+    if app.screen == 'end':
+        #drawRect(0, 0, app.width, app.height, fill = 'black', opacity = 50)
+        drawImage('cmu://1073343/43628005/image-removebg-preview+(25).png', app.width/2, app.height/2, width = 360, height = 330, align='center')
+        if app.gameOverTime >= 2:
+            drawImage(app.bgroundImg, 0, 0, width = app.width, height = app.height, align='left-top')
+            drawImage('https://freesvg.org/img/Gerald_G_Parchment_Background_or_Border_small.png', app.width/2, app.height/2, width = app.width - 40, height = app.height - 50, align = 'center')
+            drawImage('cmu://1073343/43628005/image-removebg-preview+(25).png', app.width/2, app.height/2 - 50, width = 360, height = 330, align='center')
+            drawLabel(f'Your Final Score:', app.width/2, app.height/2 - 20, size=20, font='montserrat', bold = True)
+            drawLabel(f'{app.score}', app.width/2, app.height/2 + 20, size=50, font='montserrat', bold = True)
+            #drawLabel(f'Final Score: {app.score}', app.width/2, app.height/2 + 20, size=30, fill = 'white', font='montserrat')
+            if len(app.scores) == 1: highScore = app.score
+            else: highScore = max(app.scores)
+            drawLabel(f'High Score: {highScore}', app.width/2, app.height/2 + 60, size=15, font='montserrat')
+            drawLabel('Press R to Return Home', app.width/2, app.height/2 + 80, size=15, font='montserrat')
+
+def main():
+    runApp()
+
+main()
